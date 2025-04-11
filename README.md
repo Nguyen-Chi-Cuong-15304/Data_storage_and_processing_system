@@ -38,17 +38,20 @@ Hệ thống được chia thành các thành phần chính dựa trên kiến t
 *   **Containerization:** Docker, Docker Compose
 
 ## Cấu trúc thư mục
-.
-├── crawler/
-│ └── crawl_gold.py # Script thu thập dữ liệu giá vàng
-├── spark-apps/
-│ └── jobs/
-│ ├── batch_processor.py # Job Spark xử lý batch (HDFS -> ES)
-│ ├── kafka_to_es_stream.py # Job Spark streaming (Kafka -> ES)
-│ └── kafka_to_hdfs_raw.py # Job Spark streaming (Kafka -> HDFS)
-│ └── view_parquet.py # (Tùy chọn) Job Spark để xem file Parquet
-├── docker-compose.yml # File định nghĩa hạ tầng Docker
-├── README.md 
+
+
+*   `.`
+    *   `crawler/`
+        *   `crawl_gold.py`         # Script thu thập dữ liệu giá vàng
+    *   `spark-apps/`
+        *   `jobs/`
+            *   `batch_processor.py`     # Job Spark xử lý batch (HDFS -> ES)
+            *   `kafka_to_es_stream.py`  # Job Spark streaming (Kafka -> ES)
+            *   `kafka_to_hdfs_raw.py`   # Job Spark streaming (Kafka -> HDFS)
+            *   `view_parquet.py`        # (Tùy chọn) Job Spark để xem file Parquet
+    *   `docker-compose.yml`        # File định nghĩa hạ tầng Docker
+    *   `README.md`                 # File giới thiệu này
+    *   `...` (Các file cấu hình hoặc thư mục khác nếu có)
 
 ## Hướng dẫn chạy
 
