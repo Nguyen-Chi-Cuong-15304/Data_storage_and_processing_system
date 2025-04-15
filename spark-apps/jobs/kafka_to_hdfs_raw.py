@@ -1,4 +1,7 @@
+# --- START OF FILE kafka_to_hdfs_raw.py ---
+
 from pyspark.sql import SparkSession
+# Đảm bảo import đủ các hàm cần thiết ở đầu file
 from pyspark.sql.functions import col, from_json, to_date, year, month, dayofmonth
 from pyspark.sql.types import StructType, StructField, StringType, LongType, IntegerType
 import logging
@@ -13,14 +16,29 @@ KAFKA_TOPIC = "gold-price-data"
 HDFS_RAW_DATA_PATH = "hdfs://namenode-h2dn:9000/user/data/gold_raw_parquet"
 CHECKPOINT_LOCATION_HDFS = "hdfs://namenode-h2dn:9000/user/spark/checkpoints/kafka_to_hdfs_checkpoint"
 
+# Hàm kiểm tra thư mục HDFS (giữ nguyên hoặc sửa lại như phiên bản trước nếu cần)
+def ensure_hdfs_directories(spark, paths):
+    try:
+        conf = spark._jsc.hadoopConfiguration()
+        for path_str in paths:
+            uri = spark._jvm.java.net.URI(path_str)
+            fs = spark._jvm.org.apache.hadoop.fs.FileSystem.get(uri, conf)
+            hdfs_path = spark._jvm.org.apache.hadoop.fs.Path(path_str)
+            if not fs.exists(hdfs_path):
+                fs.mkdirs(hdfs_path)
+                logger.info(f"Created HDFS directory: {path_str}")
+            else:
+                logger.info(f"HDFS directory already exists: {path_str}")
+    except Exception as e:
+        logger.error(f"ERROR ensuring HDFS directories for path '{path_str if 'path_str' in locals() else 'unknown'}': {e}", exc_info=True)
+        raise
+
 def main():
     logger.info("Starting Spark Streaming job: Kafka to HDFS Raw Parquet")
 
-    # Khởi tạo Spark Session với cấu hình HDFS
     spark = SparkSession \
         .builder \
         .appName("KafkaToHDFSRaw") \
-        .config("spark.jars.packages", "org.apache.spark:spark-sql-kafka-0-10_2.12:3.2.1") \
         .config("spark.sql.streaming.checkpointLocation", CHECKPOINT_LOCATION_HDFS) \
         .config("spark.hadoop.fs.defaultFS", "hdfs://namenode-h2dn:9000") \
         .config("spark.hadoop.dfs.client.use.datanode.hostname", "true") \
@@ -29,24 +47,15 @@ def main():
     spark.sparkContext.setLogLevel("WARN")
     logger.info("SparkSession created.")
 
-    # Kiểm tra và tạo thư mục HDFS
-    def ensure_hdfs_directories(spark, paths):
-        try:
-            fs = spark._jvm.org.apache.hadoop.fs.FileSystem.get(spark._jsc.hadoopConfiguration())
-            for path in paths:
-                hdfs_path = spark._jvm.org.apache.hadoop.fs.Path(path)
-                if not fs.exists(hdfs_path):
-                    fs.mkdirs(hdfs_path)
-                    logger.info(f"Created HDFS directory: {path}")
-                else:
-                    logger.info(f"HDFS directory already exists: {path}")
-        except Exception as e:
-            logger.error(f"ERROR ensuring HDFS directories: {e}")
-            raise
+    try:
+        logger.info("Ensuring HDFS directories exist...")
+        ensure_hdfs_directories(spark, [CHECKPOINT_LOCATION_HDFS, HDFS_RAW_DATA_PATH]) # Đảm bảo cả hai tồn tại
+        logger.info("HDFS directories checked/created.")
+    except Exception as e:
+         logger.error(f"FATAL: Could not ensure HDFS directories. Exiting. Error: {e}")
+         spark.stop()
+         exit()
 
-    ensure_hdfs_directories(spark, [HDFS_RAW_DATA_PATH, CHECKPOINT_LOCATION_HDFS])
-
-    # Đọc dữ liệu từ Kafka
     try:
         kafka_df = spark \
             .readStream \
@@ -58,32 +67,36 @@ def main():
             .load()
         logger.info("Kafka stream loaded.")
     except Exception as e:
-        logger.error(f"ERROR loading Kafka stream: {e}")
+        logger.error(f"ERROR loading Kafka stream: {e}", exc_info=True)
         spark.stop()
         exit()
 
-    # Parse JSON từ Kafka
+    # Schema gốc từ Kafka
     schema = StructType([
         StructField("crawl_timestamp", LongType(), True),
-        StructField("price_date", StringType(), True),
+        StructField("price_date", StringType(), True), # Giữ là String
         StructField("gold_type", StringType(), True),
-        StructField("buy_price", IntegerType(), True),
-        StructField("sell_price", IntegerType(), True),
+        StructField("buy_price", IntegerType(), True), # Giữ là Integer
+        StructField("sell_price", IntegerType(), True), # Giữ là Integer
         StructField("source", StringType(), True)
     ])
     parsed_df = kafka_df.selectExpr("CAST(value AS STRING) as json_value") \
                         .select(from_json(col("json_value"), schema).alias("data")) \
                         .select("data.*")
 
-    # Thêm cột để partition trên HDFS
-    parsed_df = parsed_df \
+    # Thêm cột partition
+    # Dữ liệu ghi vào HDFS sẽ có các cột gốc + các cột partition này
+    final_df_to_write = parsed_df \
         .withColumn("year", year(to_date(col("price_date"), "yyyy-MM-dd"))) \
         .withColumn("month", month(to_date(col("price_date"), "yyyy-MM-dd"))) \
         .withColumn("day", dayofmonth(to_date(col("price_date"), "yyyy-MM-dd")))
 
-    # Ghi dữ liệu vào HDFS dưới dạng Parquet
+    logger.info("Schema to be written to HDFS:")
+    final_df_to_write.printSchema() # In schema cuối cùng trước khi ghi
+
+    logger.info(f"Attempting to start writeStream to HDFS path '{HDFS_RAW_DATA_PATH}' with checkpoint '{CHECKPOINT_LOCATION_HDFS}'")
     try:
-        query = parsed_df \
+        query = final_df_to_write \
             .writeStream \
             .format("parquet") \
             .outputMode("append") \
@@ -93,15 +106,15 @@ def main():
             .trigger(processingTime='1 minute') \
             .start()
 
-        logger.info(f"Writing stream to HDFS path '{HDFS_RAW_DATA_PATH}'...")
+        logger.info(f"Writing stream to HDFS path '{HDFS_RAW_DATA_PATH}' started successfully.")
         query.awaitTermination()
     except Exception as e:
-        logger.error(f"ERROR writing to HDFS: {e}")
-        spark.stop()
-        exit()
+        logger.error(f"ERROR during writeStream operation to HDFS: {e}", exc_info=True)
     finally:
+        logger.info("Stopping SparkSession...")
         spark.stop()
         logger.info("Spark Streaming job finished.")
 
 if __name__ == "__main__":
     main()
+# --- END OF FILE kafka_to_hdfs_raw.py ---

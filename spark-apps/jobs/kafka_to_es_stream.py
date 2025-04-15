@@ -1,6 +1,9 @@
+# --- START OF FILE kafka_to_es_stream.py ---
+
 from pyspark.sql import SparkSession
-from pyspark.sql.functions import from_json, col, to_date, expr
-from pyspark.sql.types import StructType, StructField, StringType, LongType, IntegerType, DoubleType
+# Import đầy đủ các hàm cần dùng
+from pyspark.sql.functions import from_json, col, to_date, expr, lit
+from pyspark.sql.types import StructType, StructField, StringType, LongType, IntegerType, DoubleType # DoubleType không cần nữa
 import logging
 
 # --- Cấu hình Logging ---
@@ -15,11 +18,26 @@ ES_PORT = "9200"
 ES_INDEX = "gold_prices_prod"
 CHECKPOINT_LOCATION = "hdfs://namenode-h2dn:9000/user/spark/checkpoints/gold_stream_prod_checkpoint"
 
-# Khởi tạo Spark Session với cấu hình HDFS
+# Hàm kiểm tra thư mục HDFS (giữ nguyên hoặc sửa lại như phiên bản trước nếu cần)
+def ensure_hdfs_checkpoint(spark, checkpoint_path):
+     try:
+        conf = spark._jsc.hadoopConfiguration()
+        uri = spark._jvm.java.net.URI(checkpoint_path)
+        fs = spark._jvm.org.apache.hadoop.fs.FileSystem.get(uri, conf)
+        path = spark._jvm.org.apache.hadoop.fs.Path(checkpoint_path)
+        if not fs.exists(path):
+            fs.mkdirs(path)
+            logger.info(f"Created checkpoint directory: {checkpoint_path}")
+        else:
+            logger.info(f"Checkpoint directory already exists: {checkpoint_path}")
+     except Exception as e:
+        logger.error(f"ERROR ensuring HDFS checkpoint directory: {e}", exc_info=True)
+        raise
+
+# Khởi tạo Spark Session
 spark = SparkSession.builder \
     .appName("GoldPriceKafkaToElasticsearch_Prod") \
     .config("spark.streaming.stopGracefullyOnShutdown", "true") \
-    .config("spark.jars.packages", "org.apache.spark:spark-sql-kafka-0-10_2.12:3.2.1,org.elasticsearch:elasticsearch-spark-30_2.12:8.9.0") \
     .config("spark.sql.streaming.checkpointLocation", CHECKPOINT_LOCATION) \
     .config("spark.hadoop.fs.defaultFS", "hdfs://namenode-h2dn:9000") \
     .config("spark.hadoop.dfs.client.use.datanode.hostname", "true") \
@@ -28,34 +46,26 @@ spark = SparkSession.builder \
 spark.sparkContext.setLogLevel("WARN")
 logger.info("SparkSession created.")
 
-# Kiểm tra và tạo thư mục checkpoint trên HDFS
-def ensure_hdfs_checkpoint(spark, checkpoint_path):
-    try:
-        fs = spark._jvm.org.apache.hadoop.fs.FileSystem.get(spark._jsc.hadoopConfiguration())
-        path = spark._jvm.org.apache.hadoop.fs.Path(checkpoint_path)
-        if not fs.exists(path):
-            fs.mkdirs(path)
-            logger.info(f"Created checkpoint directory: {checkpoint_path}")
-        else:
-            logger.info(f"Checkpoint directory already exists: {checkpoint_path}")
-    except Exception as e:
-        logger.error(f"ERROR ensuring HDFS checkpoint directory: {e}")
-        raise
+try:
+    logger.info("Ensuring HDFS checkpoint directory exists...")
+    ensure_hdfs_checkpoint(spark, CHECKPOINT_LOCATION)
+    logger.info("HDFS checkpoint directory checked/created.")
+except Exception as e:
+     logger.error(f"FATAL: Could not ensure HDFS checkpoint directory. Exiting. Error: {e}")
+     spark.stop()
+     exit()
 
-ensure_hdfs_checkpoint(spark, CHECKPOINT_LOCATION)
-
-# Định nghĩa schema của dữ liệu JSON trong Kafka
+# Schema gốc từ Kafka
 schema = StructType([
     StructField("crawl_timestamp", LongType(), True),
-    StructField("price_date", StringType(), True),
+    StructField("price_date", StringType(), True), # Giữ là String
     StructField("gold_type", StringType(), True),
-    StructField("buy_price", IntegerType(), True),
-    StructField("sell_price", IntegerType(), True),
+    StructField("buy_price", IntegerType(), True), # Giữ là Integer
+    StructField("sell_price", IntegerType(), True), # Giữ là Integer
     StructField("source", StringType(), True)
 ])
 logger.info("Schema defined.")
 
-# Đọc dữ liệu từ Kafka
 try:
     kafka_df = spark \
         .readStream \
@@ -63,32 +73,46 @@ try:
         .option("kafka.bootstrap.servers", KAFKA_BROKER) \
         .option("subscribe", KAFKA_TOPIC) \
         .option("startingOffsets", "earliest") \
+        .option("failOnDataLoss", "false") \
         .load()
     logger.info("Kafka stream loaded.")
 except Exception as e:
-    logger.error(f"ERROR loading Kafka stream: {e}")
+    logger.error(f"ERROR loading Kafka stream: {e}", exc_info=True)
     spark.stop()
     exit()
 
-# Chuyển đổi dữ liệu từ Kafka (value là JSON) thành các cột
 value_df = kafka_df.selectExpr("CAST(value AS STRING) as json_value")
 parsed_df = value_df.select(from_json(col("json_value"), schema).alias("data")).select("data.*")
 logger.info("JSON parsed.")
 
-# Xử lý và Chuẩn hóa Kiểu dữ liệu
+# --- Chuẩn hóa Schema cho Elasticsearch Streaming View ---
+# Giữ lại crawl_timestamp (làm ID), gold_type, buy_price (int), sell_price (int), source
+# Thêm @timestamp (từ crawl_timestamp), price_date_dt (kiểu Date), view_type
 transformed_df = parsed_df \
-    .withColumn("price_date_dt", to_date(col("price_date"), "yyyy-MM-dd")) \
     .withColumn("@timestamp", expr("CAST(crawl_timestamp / 1000 AS TIMESTAMP)")) \
-    .withColumn("buy_price_dbl", col("buy_price").cast(DoubleType())) \
-    .withColumn("sell_price_dbl", col("sell_price").cast(DoubleType()))
-    
+    .withColumn("price_date_dt", to_date(col("price_date"), "yyyy-MM-dd")) \
+    .withColumn("view_type", lit("stream")) \
+    .drop("price_date") # Bỏ cột price_date gốc dạng string khỏi view này
 
-logger.info("Data transformed:")
-transformed_df.printSchema()
+# Lựa chọn cột cuối cùng để ghi vào ES
+# Giữ crawl_timestamp làm ID, @timestamp làm trường thời gian chính
+final_df_to_write = transformed_df.select(
+    "crawl_timestamp", # Sẽ được dùng làm es.mapping.id
+    "gold_type",
+    "buy_price",
+    "sell_price",
+    "source",
+    "@timestamp",      # Trường timestamp chuẩn cho ES
+    "price_date_dt",   # Trường date để lọc theo ngày
+    "view_type"
+)
 
-# Ghi dữ liệu vào Elasticsearch
+logger.info("Schema to be written to Elasticsearch (Streaming):")
+final_df_to_write.printSchema()
+
+logger.info(f"Attempting to start writeStream to Elasticsearch index '{ES_INDEX}' with checkpoint '{CHECKPOINT_LOCATION}'")
 try:
-    query = transformed_df \
+    query = final_df_to_write \
         .writeStream \
         .format("org.elasticsearch.spark.sql") \
         .option("es.nodes", ES_NODES) \
@@ -103,12 +127,13 @@ try:
         .trigger(processingTime='1 minute') \
         .start()
 
-    logger.info(f"Writing stream to Elasticsearch index '{ES_INDEX}'...")
+    logger.info(f"Writing stream to Elasticsearch index '{ES_INDEX}' started successfully.")
     query.awaitTermination()
 except Exception as e:
-    logger.error(f"ERROR writing to Elasticsearch: {e}")
-    spark.stop()
-    exit()
+    logger.error(f"ERROR during writeStream operation to Elasticsearch: {e}", exc_info=True)
 finally:
+    logger.info("Stopping SparkSession...")
     spark.stop()
     logger.info("Spark Streaming job finished.")
+
+# --- END OF FILE kafka_to_es_stream.py ---

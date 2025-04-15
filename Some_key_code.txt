@@ -17,6 +17,42 @@ docker exec namenode-h2dn hdfs dfs -ls /user/data/gold_raw_parquet/year=2025/mon
 #tra cuu noi dung
 docker exec spark-master-h2dn /spark/bin/spark-submit --master spark://spark-master-h2dn:7077 /opt/spark-apps/jobs/view_parquet.py hdfs://namenode-h2dn:9000/user/data/gold_raw_parquet/year=2025/month=3/day=15/part-00000-ff54860f-0202-44b9-8809-ad807697c686.c000.snappy.parquet
 
+# hdfs to elasticsearch
+docker exec spark-master-h2dn /spark/bin/spark-submit --master spark://spark-master-h2dn:7077 --packages org.elasticsearch:elasticsearch-spark-30_2.12:8.9.0 /opt/spark-apps/jobs/batch_processor.py
 
 
 
+
+# mapping price_date thanh kieu date: 
+DELETE gold_prices_prod
+PUT _index_template/gold_prices_template
+{
+  "index_patterns": ["gold_prices_prod*"],
+  "priority": 500,
+  "template": {
+    "settings": {
+      "number_of_shards": 1
+    },
+    "mappings": {
+      "properties": {
+        "@timestamp": { "type": "date" },             // ĐÚNG: date
+        "price_date_dt": { "type": "date" },          // ĐÚNG: date
+        "price_date": { "type": "keyword" },        // Giữ price_date gốc làm keyword nếu cần lọc chính xác chuỗi
+        "gold_type": { "type": "keyword" },
+        "source": { "type": "keyword" },
+        "view_type": { "type": "keyword" },
+        "buy_price": { "type": "long" },
+        "sell_price": { "type": "long" },
+        "crawl_timestamp": { "type": "long" },
+        "avg_buy_price": {"type": "double"},
+        "avg_sell_price": {"type": "double"},
+        "min_buy_price": {"type": "long"},
+        "max_buy_price": {"type": "long"},
+        "min_sell_price": {"type": "long"},
+        "max_sell_price": {"type": "long"},
+        "record_count": {"type": "long"},
+        "doc_id": {"type": "keyword"}
+      }
+    }
+  }
+}
