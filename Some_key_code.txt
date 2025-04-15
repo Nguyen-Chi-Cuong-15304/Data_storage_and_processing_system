@@ -56,3 +56,8 @@ PUT _index_template/gold_prices_template
     }
   }
 }
+
+# hdfs to csv
+docker exec spark-master-h2dn /spark/bin/spark-submit --master spark://spark-master-h2dn:7077 /opt/spark-apps/jobs/extract_to_csv.py  
+Run: docker exec namenode-h2dn hdfs dfs -getmerge hdfs://namenode-h2dn:9000/user/data/temp_gold_csv_parts /tmp/merged_output.csv
+docker cp namenode-h2dn:/tmp/merged_output.csv .\gold_data_extracted.csv  
