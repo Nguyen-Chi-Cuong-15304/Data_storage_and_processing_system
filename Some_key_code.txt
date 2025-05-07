@@ -16,7 +16,7 @@ docker exec spark-master-h2dn /spark/bin/spark-submit --master spark://spark-mas
 docker exec namenode-h2dn hdfs dfs -ls /user/data/gold_raw_parquet/year=2025/month=3/day=2 
 
 #tra cuu noi dung
-docker exec spark-master-h2dn /spark/bin/spark-submit --master spark://spark-master-h2dn:7077 /opt/spark-apps/jobs/view_parquet.py hdfs://namenode-h2dn:9000/user/data/gold_raw_parquet/year=2025/month=3/day=15/part-00000-ff54860f-0202-44b9-8809-ad807697c686.c000.snappy.parquet
+docker exec spark-master-h2dn /spark/bin/spark-submit --master spark://spark-master-h2dn:7077 /opt/spark-apps/jobs/view_parquet.py hdfs://namenode-h2dn:9000/user/data/gold_raw_parquet/year=2025/month=3/day=15/part...
 docker exec spark-master-h2dn /spark/bin/spark-submit --master spark://spark-master-h2dn:7077 /opt/spark-apps/jobs/view_parquet_phone.py hdfs://namenode-h2dn:9000/user/data/phone_raw_parquet/phone_data.parquet
 
 

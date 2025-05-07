@@ -18,7 +18,7 @@ ES_PORT = "9200"
 ES_INDEX = "gold_prices_prod"
 CHECKPOINT_LOCATION = "hdfs://namenode-h2dn:9000/user/spark/checkpoints/gold_stream_prod_checkpoint"
 
-# Hàm kiểm tra thư mục HDFS (giữ nguyên hoặc sửa lại như phiên bản trước nếu cần)
+# Hàm kiểm tra thư mục HDFS checkpoint và tạo nếu không tồn tại
 def ensure_hdfs_checkpoint(spark, checkpoint_path):
      try:
         conf = spark._jsc.hadoopConfiguration()

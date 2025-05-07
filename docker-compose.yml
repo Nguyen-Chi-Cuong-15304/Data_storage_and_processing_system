@@ -5,13 +5,10 @@ networks:
     driver: bridge
 
 volumes:
-  # --- Volumes ---
-  # Quan trọng: Nếu bạn gặp lỗi "InconsistentClusterIdException" với Kafka,
-  # hoặc muốn xóa sạch toàn bộ dữ liệu để bắt đầu lại, hãy chạy:
-  # docker-compose down -v
-  # Lệnh này sẽ xóa tất cả các volume bên dưới.
   zk-data-h2dn:
+    # external: true
   zk-datalog-h2dn:
+    # external: true
   kafka-data-h2dn:
   nn-data-h2dn:
   dn1-data-h2dn:
@@ -31,9 +28,17 @@ services:
     environment:
       ZOOKEEPER_CLIENT_PORT: 2181
       ZOOKEEPER_TICK_TIME: 2000
+      ZOOKEEPER_CLUSTER_ID: "hadoop-cluster-2dn" # ID của cluster Zookeeper
     volumes:
-      - zk-data-h2dn:/data
-      - zk-datalog-h2dn:/datalog
+      - zk-data-h2dn:/var/lib/zookeeper/data # Thư mục lưu trữ dữ liệu Zookeeper
+      - zk-datalog-h2dn:/var/lib/zookeeper/log
+    stop_grace_period: 1m # Thời gian chờ khi dừng container Zookeeper
+    healthcheck:
+      test: ["CMD", "sh", "-c", "nc -z localhost 2181 || exit 1"] # Kiểm tra cổng client ZK
+      interval: 10s
+      timeout: 5s
+      retries: 5
+      start_period: 10s # Thời gian chờ trước khi bắt đầu kiểm tra
 
   # --- Kafka ---
   # Message broker để nhận dữ liệu từ crawler và cung cấp cho Spark Streaming
@@ -46,10 +51,11 @@ services:
       - "9092:9092"   # Port cho client bên ngoài Docker (crawler)
       - "29092:29092" # Port cho client bên trong Docker (Spark)
     depends_on:
-      - zookeeper
+      zookeeper:
+        condition: service_healthy # Chờ Zookeeper thực sự healthy
     environment:
       KAFKA_BROKER_ID: 1
-      KAFKA_ZOOKEEPER_CONNECT: 'zookeeper-h2dn:2181' # Địa chỉ Zookeeper bên trong Docker
+      KAFKA_ZOOKEEPER_CONNECT: 'zookeeper:2181' # Địa chỉ Zookeeper bên trong Docker
       # Khai báo các listeners mà Kafka sẽ lắng nghe:
       KAFKA_LISTENER_SECURITY_PROTOCOL_MAP: PLAINTEXT:PLAINTEXT,PLAINTEXT_INTERNAL:PLAINTEXT
       #   - PLAINTEXT: Cho client bên ngoài (trên port 9092)
@@ -65,16 +71,13 @@ services:
       KAFKA_CONFLUENT_BALANCER_TOPIC_REPLICATION_FACTOR: 1 # Bắt buộc là 1
       KAFKA_TRANSACTION_STATE_LOG_MIN_ISR: 1 # Bắt buộc là 1
       KAFKA_TRANSACTION_STATE_LOG_REPLICATION_FACTOR: 1 # Bắt buộc là 1
+      KAFKA_CLUSTER_ID: "hadoop-cluster-2dn" # ID của cluster Kafka
     volumes:
       - kafka-data-h2dn:/var/lib/kafka/data
-      - ./kafka-cluster-id-check.sh:/kafka-cluster-id-check.sh # Mount script
-    entrypoint: 
-      - bash
-      - -c
-      - |
-        chmod +x /kafka-cluster-id-check.sh
-        /kafka-cluster-id-check.sh
-        exec /etc/confluent/docker/run 
+
+    stop_grace_period: 1m # Thời gian chờ khi dừng container Kafka
+      
+    
 
   # --- HDFS Namenode ---
   # Quản lý metadata của hệ thống file HDFS
@@ -158,6 +161,7 @@ services:
         condition: service_started # Chỉ cần datanode bắt đầu chạy là được
       datanode2:
         condition: service_started
+      
 
   # --- Spark Worker 1 ---
   # Thực thi các task Spark
