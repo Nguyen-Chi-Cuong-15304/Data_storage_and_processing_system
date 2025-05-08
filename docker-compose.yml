@@ -141,67 +141,69 @@ services:
   # --- Spark Master ---
   # Quản lý cluster Spark
   spark-master:
-    image: bde2020/spark-master:3.2.1-hadoop3.2
+    build:
+      context: .
+      dockerfile: Dockerfile.spark-base-deb
+    image: spark-custom-deb:3.2.1
     container_name: spark-master-h2dn
-    networks:
-      - hadoop-2dn-net
-    ports:
-      - "8080:8080" # Port Web UI của Spark Master
-      - "7077:7077" # Port để submit job lên Spark Master
-    volumes:
-      - ./spark-apps:/opt/spark-apps # Map thư mục chứa code Spark vào container
     environment:
-      - INIT_DAEMON_STEP=setup_spark
-      - SPARK_PUBLIC_DNS=localhost # Địa chỉ Spark Master quảng bá cho driver/worker
-      # - Không cần SPARK_MASTER_OPTS cho packages ở đây, sẽ cung cấp qua spark-submit
-    depends_on:
-      namenode:
-        condition: service_healthy
-      datanode1:
-        condition: service_started # Chỉ cần datanode bắt đầu chạy là được
-      datanode2:
-        condition: service_started
-      
-
-  # --- Spark Worker 1 ---
-  # Thực thi các task Spark
-  spark-worker-1:
-    image: bde2020/spark-worker:3.2.1-hadoop3.2
-    container_name: spark-worker-1-h2dn
-    networks:
-      - hadoop-2dn-net
+      - SPARK_MODE=master
+      - SPARK_MASTER_HOST=spark-master-h2dn
+      - SPARK_MASTER_PORT=7077
     ports:
-      - "8081:8081" # Port Web UI của Worker 1 (tùy chọn)
-    depends_on:
-      - spark-master
-    environment:
-      - SPARK_MASTER=spark://spark-master-h2dn:7077 # Địa chỉ Spark Master
-      - SPARK_WORKER_MEMORY=1G # Giới hạn RAM cho worker
-      - SPARK_WORKER_CORES=1   # Số core CPU cho worker
-      - SPARK_PUBLIC_DNS=localhost
-      # - Không cần SPARK_WORKER_OPTS cho packages ở đây
-    volumes:
-      - ./spark-apps:/opt/spark-apps # Đảm bảo worker có thể truy cập code nếu cần
-
-  # --- Spark Worker 2 ---
-  # Thực thi các task Spark
-  spark-worker-2:
-    image: bde2020/spark-worker:3.2.1-hadoop3.2
-    container_name: spark-worker-2-h2dn
-    networks:
-      - hadoop-2dn-net
-    ports:
-      - "8082:8081" # Port Web UI của Worker 2 (ánh xạ vào port khác trên host)
-    depends_on:
-      - spark-master
-    environment:
-      - SPARK_MASTER=spark://spark-master-h2dn:7077
-      - SPARK_WORKER_MEMORY=1G
-      - SPARK_WORKER_CORES=1
-      - SPARK_PUBLIC_DNS=localhost
-      # - Không cần SPARK_WORKER_OPTS cho packages ở đây
+      - "8080:8080"
+      - "7077:7077"
     volumes:
       - ./spark-apps:/opt/spark-apps
+      - ./exported_model:/opt/exported_model
+    networks:
+      - hadoop-2dn-net
+    depends_on:
+      - namenode
+      - datanode1
+      - datanode2
+
+  spark-worker-1:
+    build:
+      context: .
+      dockerfile: Dockerfile.spark-base-deb
+    image: spark-worker-custom-deb:3.2.1
+    container_name: spark-worker-1-h2dn
+    environment:
+      - SPARK_MODE=worker
+      - SPARK_MASTER_URL=spark://spark-master-h2dn:7077
+      - SPARK_WORKER_MEMORY=1G
+      - SPARK_WORKER_CORES=1
+    ports:
+      - "8081:8081"
+    volumes:
+      - ./spark-apps:/opt/spark-apps
+      - ./exported_model:/opt/exported_model
+    networks:
+      - hadoop-2dn-net
+    depends_on:
+      - spark-master
+
+  spark-worker-2:
+    build:
+      context: .
+      dockerfile: Dockerfile.spark-base-deb
+    image: spark-worker-custom-deb:3.2.1
+    container_name: spark-worker-2-h2dn
+    environment:
+      - SPARK_MODE=worker
+      - SPARK_MASTER_URL=spark://spark-master-h2dn:7077
+      - SPARK_WORKER_MEMORY=1G
+      - SPARK_WORKER_CORES=1
+    ports:
+      - "8082:8081"
+    volumes:
+      - ./spark-apps:/opt/spark-apps
+      - ./exported_model:/opt/exported_model
+    networks:
+      - hadoop-2dn-net
+    depends_on:
+      - spark-master
 
   # --- Elasticsearch ---
   # Lưu trữ và cung cấp dữ liệu cho truy vấn (Serving Layer)

@@ -64,3 +64,28 @@ PUT _index_template/gold_prices_template
 docker exec spark-master-h2dn /spark/bin/spark-submit --master spark://spark-master-h2dn:7077 /opt/spark-apps/jobs/extract_to_csv.py  
 Run: docker exec namenode-h2dn hdfs dfs -getmerge hdfs://namenode-h2dn:9000/user/data/temp_gold_csv_parts /tmp/merged_output.csv
 docker cp namenode-h2dn:/tmp/merged_output.csv .\gold_data_extracted.csv  
+
+
+
+
+
+
+# Cap quyen ghi cho spark
+hdfs dfs -mkdir -p /user/spark
+hdfs dfs -chown spark:spark /user/spark
+
+***Tuy chon***
+hdfs dfs -mkdir -p /user/spark/models
+hdfs dfs -chown -R spark:spark /user/spark/models
+
+
+***Huan luyen
+docker exec -it spark-master-h2dn /opt/bitnami/spark/bin/spark-submit --master spark://spark-master-h2dn:7077 /opt/spark-apps/jobs/gold_price_prediction_with_date.py
+
+docker exec -it spark-master-h2dn /opt/bitnami/spark/bin/spark-submit --master spark://spark-master-h2dn:7077 /opt/spark-apps/jobs/predict_gold_price.py
+
+
+docker exec -it namenode-h2dn bash -c "hdfs dfs -mkdir -p /model_export && hdfs dfs -get /user/spark/models/gold_price_model_with_date /model_export"
+docker cp namenode-h2dn:/model_export .\exported_model
+
+
