@@ -6,22 +6,25 @@ docker exec namenode-h2dn hdfs dfs -rm -r /user/spark/checkpoints/kafka_to_hdfs_
 docker exec namenode-h2dn hdfs dfs -rm -r /user/spark/checkpoints/kafka_to_hdfs_phone_checkpoint
 
 
-docker exec spark-master-h2dn /spark/bin/spark-submit --master spark://spark-master-h2dn:7077 --packages org.apache.spark:spark-sql-kafka-0-10_2.12:3.2.1 /opt/spark-apps/jobs/kafka_to_hdfs_raw.py
+docker exec spark-master-process-h2dn /spark/bin/spark-submit --master spark://spark-master-process-h2dn:7077 --packages org.apache.spark:spark-sql-kafka-0-10_2.12:3.2.1 /opt/spark-apps/jobs/kafka_to_hdfs_raw.py
+docker exec spark-master-process-h2dn /spark/bin/spark-submit --master spark://spark-master-process-h2dn:7077 --packages org.apache.spark:spark-sql-kafka-0-10_2.12:3.2.1,org.elasticsearch:elasticsearch-spark-30_2.12:8.9.0 /opt/spark-apps/jobs/kafka_to_es_stream.py
+docker exec spark-master-process-h2dn /spark/bin/spark-submit --master spark://spark-master-process-h2dn:7077 --packages org.apache.spark:spark-sql-kafka-0-10_2.12:3.2.1 /opt/spark-apps/jobs/read_all_data_in_hdfs.py
 
 
-docker exec spark-master-h2dn /spark/bin/spark-submit --master spark://spark-master-h2dn:7077 --packages org.apache.spark:spark-sql-kafka-0-10_2.12:3.2.1,org.elasticsearch:elasticsearch-spark-30_2.12:8.9.0 /opt/spark-apps/jobs/kafka_to_es_stream_phone.py
+
+docker exec spark-master-process-h2dn /spark/bin/spark-submit --master spark://spark-master-processh2dn:7077 --packages org.apache.spark:spark-sql-kafka-0-10_2.12:3.2.1,org.elasticsearch:elasticsearch-spark-30_2.12:8.9.0 /opt/spark-apps/jobs/kafka_to_es_stream_phone.py
 
 
 #tim noi chua noi dung
 docker exec namenode-h2dn hdfs dfs -ls /user/data/gold_raw_parquet/year=2025/month=3/day=2 
 
 #tra cuu noi dung
-docker exec spark-master-h2dn /spark/bin/spark-submit --master spark://spark-master-h2dn:7077 /opt/spark-apps/jobs/view_parquet.py hdfs://namenode-h2dn:9000/user/data/gold_raw_parquet/year=2025/month=3/day=15/part...
-docker exec spark-master-h2dn /spark/bin/spark-submit --master spark://spark-master-h2dn:7077 /opt/spark-apps/jobs/view_parquet_phone.py hdfs://namenode-h2dn:9000/user/data/phone_raw_parquet/phone_data.parquet
+docker exec spark-master-process-h2dn /spark/bin/spark-submit --master spark://spark-master-process-h2dn:7077 /opt/spark-apps/jobs/view_parquet.py hdfs://namenode-h2dn:9000/user/data/gold_raw_parquet/year=2025/month=3/day=15/part...
+docker exec spark-master-process-h2dn /spark/bin/spark-submit --master spark://spark-master-process-h2dn:7077 /opt/spark-apps/jobs/view_parquet_phone.py hdfs://namenode-h2dn:9000/user/data/phone_raw_parquet/phone_data.parquet
 
 
 # hdfs to elasticsearch
-docker exec spark-master-h2dn /spark/bin/spark-submit --master spark://spark-master-h2dn:7077 --packages org.elasticsearch:elasticsearch-spark-30_2.12:8.9.0 /opt/spark-apps/jobs/batch_processor.py
+docker exec spark-master-process-h2dn /spark/bin/spark-submit --master spark://spark-master-process-h2dn:7077 --packages org.elasticsearch:elasticsearch-spark-30_2.12:8.9.0 /opt/spark-apps/jobs/batch_processor.py
 
 
 
@@ -66,7 +69,8 @@ Run: docker exec namenode-h2dn hdfs dfs -getmerge hdfs://namenode-h2dn:9000/user
 docker cp namenode-h2dn:/tmp/merged_output.csv .\gold_data_extracted.csv  
 
 
-
+####kafka_to_es_stream
+docker exec -it spark-master-h2dn /opt/bitnami/spark/bin/spark-submit --master spark://spark-master-h2dn:7077 /opt/spark-apps/jobs/kafka_to_es_stream.py
 
 
 
@@ -80,9 +84,10 @@ hdfs dfs -chown -R spark:spark /user/spark/models
 
 
 ***Huan luyen
-docker exec -it spark-master-h2dn /opt/bitnami/spark/bin/spark-submit --master spark://spark-master-h2dn:7077 /opt/spark-apps/jobs/gold_price_prediction_with_date.py
+docker exec -it spark-master-train-h2dn /opt/bitnami/spark/bin/spark-submit --master spark://spark-master-train-h2dn:7077 /opt/spark-apps/jobs/gold_price_prediction_with_date.py
+docker exec -it spark-master-train-h2dn /opt/bitnami/spark/bin/spark-submit --master spark://spark-master-train-h2dn:7077 /opt/spark-apps/jobs/train_model.py
 
-docker exec -it spark-master-h2dn /opt/bitnami/spark/bin/spark-submit --master spark://spark-master-h2dn:7077 /opt/spark-apps/jobs/predict_gold_price.py
+docker exec -it spark-master-train-h2dn /opt/bitnami/spark/bin/spark-submit --master spark://spark-master-train-h2dn:7077 /opt/spark-apps/jobs/predict_gold_price.py
 
 
 docker exec -it namenode-h2dn bash -c "hdfs dfs -mkdir -p /model_export && hdfs dfs -get /user/spark/models/gold_price_model_with_date /model_export"

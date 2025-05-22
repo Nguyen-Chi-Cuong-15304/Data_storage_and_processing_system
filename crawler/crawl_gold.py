@@ -98,8 +98,8 @@ except Exception as e:
 
 # --- Chuẩn bị danh sách ngày cần crawl ---
 today = datetime.date.today()
-start_date = today - datetime.timedelta(30)
-end_date = today
+start_date = today - datetime.timedelta(60)
+end_date = today - datetime.timedelta(30)  # Chỉ crawl từ 30 ngày trước đến hôm nay
 #lan 2 se crawl tu 30 ngay truoc den hom nay
 
 date_to_crawl_objs = []

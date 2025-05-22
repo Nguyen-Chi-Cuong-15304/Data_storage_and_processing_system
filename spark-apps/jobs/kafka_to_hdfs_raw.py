@@ -1,9 +1,6 @@
-# --- START OF FILE kafka_to_hdfs_raw.py ---
-
 from pyspark.sql import SparkSession
-# Đảm bảo import đủ các hàm cần thiết ở đầu file
-from pyspark.sql.functions import col, from_json, to_date, year, month, dayofmonth
-from pyspark.sql.types import StructType, StructField, StringType, LongType, IntegerType
+from pyspark.sql.functions import col, from_json, to_date, year, month, dayofmonth, expr
+from pyspark.sql.types import StructType, StructField, StringType, LongType, IntegerType, FloatType
 import logging
 
 # --- Cấu hình Logging ---
@@ -12,11 +9,11 @@ logger = logging.getLogger(__name__)
 
 # --- Cấu hình ---
 KAFKA_BROKER = "kafka-h2dn:29092"
-KAFKA_TOPIC = "gold-price-data"
-HDFS_RAW_DATA_PATH = "hdfs://namenode-h2dn:9000/user/data/gold_raw_parquet"
-CHECKPOINT_LOCATION_HDFS = "hdfs://namenode-h2dn:9000/user/spark/checkpoints/kafka_to_hdfs_checkpoint"
+KAFKA_TOPIC = "device-data"  
+HDFS_RAW_DATA_PATH = "hdfs://namenode-h2dn:9000/user/data/device_raw_parquet"
+CHECKPOINT_LOCATION_HDFS = "hdfs://namenode-h2dn:9000/user/spark/checkpoints/kafka_to_hdfs_device_checkpoint"
 
-# Hàm kiểm tra thư mục HDFS (giữ nguyên hoặc sửa lại như phiên bản trước nếu cần)
+# Hàm kiểm tra thư mục HDFS
 def ensure_hdfs_directories(spark, paths):
     try:
         conf = spark._jsc.hadoopConfiguration()
@@ -34,11 +31,11 @@ def ensure_hdfs_directories(spark, paths):
         raise
 
 def main():
-    logger.info("Starting Spark Streaming job: Kafka to HDFS Raw Parquet")
+    logger.info("Starting Spark Streaming job: Kafka to HDFS Raw Parquet for Device Data")
 
     spark = SparkSession \
         .builder \
-        .appName("KafkaToHDFSRaw") \
+        .appName("KafkaToHDFSDeviceRaw") \
         .config("spark.sql.streaming.checkpointLocation", CHECKPOINT_LOCATION_HDFS) \
         .config("spark.hadoop.fs.defaultFS", "hdfs://namenode-h2dn:9000") \
         .config("spark.hadoop.dfs.client.use.datanode.hostname", "true") \
@@ -49,12 +46,12 @@ def main():
 
     try:
         logger.info("Ensuring HDFS directories exist...")
-        ensure_hdfs_directories(spark, [CHECKPOINT_LOCATION_HDFS, HDFS_RAW_DATA_PATH]) # Đảm bảo cả hai tồn tại
+        ensure_hdfs_directories(spark, [CHECKPOINT_LOCATION_HDFS, HDFS_RAW_DATA_PATH])
         logger.info("HDFS directories checked/created.")
     except Exception as e:
-         logger.error(f"FATAL: Could not ensure HDFS directories. Exiting. Error: {e}")
-         spark.stop()
-         exit()
+        logger.error(f"FATAL: Could not ensure HDFS directories. Exiting. Error: {e}")
+        spark.stop()
+        exit()
 
     try:
         kafka_df = spark \
@@ -71,28 +68,42 @@ def main():
         spark.stop()
         exit()
 
-    # Schema gốc từ Kafka
+    # Schema gốc từ Kafka topic `laptop-data`
     schema = StructType([
         StructField("crawl_timestamp", LongType(), True),
-        StructField("price_date", StringType(), True), # Giữ là String
-        StructField("gold_type", StringType(), True),
-        StructField("buy_price", IntegerType(), True), # Giữ là Integer
-        StructField("sell_price", IntegerType(), True), # Giữ là Integer
+        StructField("product_id", IntegerType(), True),
+        StructField("name", StringType(), True),
+        StructField("brand", StringType(), True),
+        StructField("category", StringType(), True),
+        StructField("color", StringType(), True),
+        StructField("price", StringType(), True),  # Sẽ được cast sang Float
+        StructField("price_old", StringType(), True),  # Sẽ được cast sang Float
+        StructField("RAM", StringType(), True),
+        StructField("ROM", StringType(), True),
+        StructField("percent", StringType(), True),  # Sẽ được cast sang Integer
+        StructField("rating", StringType(), True),  # Sẽ được cast sang Float
+        StructField("sold", StringType(), True),  # Sẽ được cast sang Integer
         StructField("source", StringType(), True)
     ])
     parsed_df = kafka_df.selectExpr("CAST(value AS STRING) as json_value") \
                         .select(from_json(col("json_value"), schema).alias("data")) \
                         .select("data.*")
 
-    # Thêm cột partition
-    # Dữ liệu ghi vào HDFS sẽ có các cột gốc + các cột partition này
+    # Thêm cột partition dựa trên crawl_timestamp
     final_df_to_write = parsed_df \
-        .withColumn("year", year(to_date(col("price_date"), "yyyy-MM-dd"))) \
-        .withColumn("month", month(to_date(col("price_date"), "yyyy-MM-dd"))) \
-        .withColumn("day", dayofmonth(to_date(col("price_date"), "yyyy-MM-dd")))
+        .withColumn("timestamp", expr("CAST(crawl_timestamp / 1000 AS TIMESTAMP)")) \
+        .withColumn("year", year(col("timestamp"))) \
+        .withColumn("month", month(col("timestamp"))) \
+        .withColumn("day", dayofmonth(col("timestamp"))) \
+        .withColumn("price", col("price").cast(FloatType())) \
+        .withColumn("price_old", col("price_old").cast(FloatType())) \
+        .withColumn("percent", col("percent").cast(IntegerType())) \
+        .withColumn("rating", col("rating").cast(FloatType())) \
+        .withColumn("sold", col("sold").cast(IntegerType())) \
+        .drop("timestamp")  # Loại bỏ cột tạm thời sau khi tính partition
 
     logger.info("Schema to be written to HDFS:")
-    final_df_to_write.printSchema() # In schema cuối cùng trước khi ghi
+    final_df_to_write.printSchema()
 
     logger.info(f"Attempting to start writeStream to HDFS path '{HDFS_RAW_DATA_PATH}' with checkpoint '{CHECKPOINT_LOCATION_HDFS}'")
     try:
@@ -117,4 +128,3 @@ def main():
 
 if __name__ == "__main__":
     main()
-# --- END OF FILE kafka_to_hdfs_raw.py ---
