@@ -1,0 +1,7 @@
+chạy file crawl trong folder crawler (crawl_soccer.ipynb)
+
+#Chuyển dữ liệu từ kafka vào trong elasticsearch:
+docker exec spark-master-process-h2dn /spark/bin/spark-submit --master spark://spark-master-process-h2dn:7077 --packages org.apache.spark:spark-sql-kafka-0-10_2.12:3.2.1,org.elasticsearch:elasticsearch-spark-30_2.12:8.9.0 /opt/spark-apps/jobs/streaming.py
+
+#Chuyển dữ liệu từ kafka vào trong hdfs
+docker exec spark-master-process-h2dn /spark/bin/spark-submit --master spark://spark-master-process-h2dn:7077 --packages org.apache.spark:spark-sql-kafka-0-10_2.12:3.2.1 /opt/spark-apps/jobs/save_hdfs.py
