@@ -5,3 +5,16 @@ docker exec spark-master-process-h2dn /spark/bin/spark-submit --master spark://s
 
 #Chuyển dữ liệu từ kafka vào trong hdfs
 docker exec spark-master-process-h2dn /spark/bin/spark-submit --master spark://spark-master-process-h2dn:7077 --packages org.apache.spark:spark-sql-kafka-0-10_2.12:3.2.1 /opt/spark-apps/jobs/save_hdfs.py
+
+
+
+# Cap quyen ghi cho spark
+hdfs dfs -mkdir -p /user/spark
+hdfs dfs -chown spark:spark /user/spark
+
+***Tuy chon***
+hdfs dfs -mkdir -p /user/spark/models
+hdfs dfs -chown -R spark:spark /user/spark/models
+
+#train mo hinh 
+docker exec -it spark-master-train-h2dn /opt/bitnami/spark/bin/spark-submit --master spark://spark-master-train-h2dn:7077 /opt/spark-apps/jobs/train_model.py

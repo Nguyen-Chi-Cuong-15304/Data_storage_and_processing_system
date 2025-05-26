@@ -6,7 +6,7 @@ logging.basicConfig(level=logging.INFO, format='%(asctime)s - %(levelname)s - %(
 logger = logging.getLogger(__name__)
 
 # --- Cấu hình ---
-HDFS_RAW_DATA_PATH = "hdfs://namenode-h2dn:9000/user/data/player_raw_parquet"  # Thay bằng đường dẫn bạn muốn đọc (device hoặc gold)
+HDFS_RAW_DATA_PATH = "hdfs://namenode-h2dn:9000/user/data/football_players_raw_parquet"  # Thay bằng đường dẫn bạn muốn đọc (device hoặc gold)
 
 def main():
     logger.info("Starting Spark job to read data from HDFS")

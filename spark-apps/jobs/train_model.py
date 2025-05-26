@@ -1,10 +1,9 @@
+
 from pyspark.sql import SparkSession
-from pyspark.ml.feature import StringIndexer, VectorAssembler, StandardScaler
-from pyspark.ml.regression import LinearRegression, RandomForestRegressor, GeneralizedLinearRegression
+from pyspark.ml.feature import VectorAssembler, StringIndexer
+from pyspark.ml.regression import LinearRegression
 from pyspark.ml.evaluation import RegressionEvaluator
-from pyspark.ml import Pipeline
 from pyspark.sql.functions import col
-from pyspark.sql import DataFrame
 import logging
 
 # --- Cấu hình Logging ---
@@ -12,15 +11,16 @@ logging.basicConfig(level=logging.INFO, format='%(asctime)s - %(levelname)s - %(
 logger = logging.getLogger(__name__)
 
 # --- Cấu hình ---
-HDFS_RAW_DATA_PATH = "hdfs://namenode-h2dn:9000/user/data/device_raw_parquet"
-MODEL_PATH = "hdfs://namenode-h2dn:9000/user/models/sales_prediction_model"
+HDFS_DATA_PATH = "hdfs://namenode-h2dn:9000/user/data/football_players_raw_parquet"
+MODEL_PATH = "hdfs://namenode-h2dn:9000/user/spark/models/football_market_value_model"
 
 def main():
-    logger.info("Starting Spark job to train sales prediction model")
+    logger.info("Starting Spark ML job: Training model for Football Players")
 
-    # Khởi tạo Spark Session
-    spark = SparkSession.builder \
-        .appName("TrainSalesPredictionModel") \
+    # Khởi tạo SparkSession
+    spark = SparkSession \
+        .builder \
+        .appName("FootballPlayerMarketValuePrediction") \
         .config("spark.hadoop.fs.defaultFS", "hdfs://namenode-h2dn:9000") \
         .config("spark.hadoop.dfs.client.use.datanode.hostname", "true") \
         .getOrCreate()
@@ -30,138 +30,83 @@ def main():
 
     try:
         # Đọc dữ liệu từ HDFS
-        logger.info(f"Reading Parquet data from {HDFS_RAW_DATA_PATH}")
-        df = spark.read.parquet(HDFS_RAW_DATA_PATH)
+        logger.info(f"Reading data from HDFS path: {HDFS_DATA_PATH}")
+        df = spark.read.parquet(HDFS_DATA_PATH)
+        logger.info(f"Loaded {df.count()} records from HDFS.")
 
-        # Hiển thị schema và một vài dòng dữ liệu
-        logger.info("Schema of the DataFrame:")
-        df.printSchema()
-        logger.info("Sample data (5 rows):")
-        df.show(5, truncate=False)
-
-        # --- Tiền xử lý dữ liệu ---
-
-        # 1. Chuyển đổi các cột phân loại thành dạng số
-        categorical_columns = ["brand", "category", "color", "RAM", "ROM"]
-        indexers = [
-            StringIndexer(inputCol=col, outputCol=f"{col}_index", handleInvalid="keep")
-            for col in categorical_columns
+        # Chọn các cột đặc trưng và nhãn
+        feature_columns = [
+            "age", "appearances", "PPG", "goals", "assists", "own_goals",
+            "substitutions_on", "substitutions_off", "yellow_cards",
+            "second_yellow_cards", "red_cards", "penalty_goals",
+            "minutes_per_goal", "minutes_played", "player_height"
         ]
+        label_column = "market_value"
 
-        # 2. Tạo vector đặc trưng từ các cột số và cột phân loại đã được mã hóa
-        numeric_columns = ["price", "price_old", "percent", "rating"]
-        indexed_columns = [f"{col}_index" for col in categorical_columns]
-        feature_columns = numeric_columns + indexed_columns
+        # Kiểm tra dữ liệu null
+        for col_name in feature_columns + [label_column]:
+            null_count = df.filter(col(col_name).isNull()).count()
+            if null_count > 0:
+                logger.warning(f"Column {col_name} has {null_count} null values.")
+                df = df.filter(col(col_name).isNotNull())
 
+        # Lọc dữ liệu (loại bỏ thủ môn và strong_foot không hợp lệ)
+        df = df.filter((col("position") != "Goalkeeper") & 
+                       (col("strong_foot").isin("left", "right", "both")))
+        logger.info(f"After filtering, {df.count()} records remain.")
+
+        # Chuyển đổi dữ liệu thành vector đặc trưng
         assembler = VectorAssembler(
             inputCols=feature_columns,
-            outputCol="raw_features",
-            handleInvalid="skip"
-        )
-
-        # 3. Chuẩn hóa các đặc trưng số
-        scaler = StandardScaler(
-            inputCol="raw_features",
             outputCol="features",
-            withStd=True,
-            withMean=True
+            handleInvalid="skip"  # Bỏ qua các hàng có giá trị không hợp lệ
         )
+        feature_df = assembler.transform(df)
+        logger.info("Features assembled.")
 
-        # 4. Pipeline tiền xử lý
-        preprocessing_stages = indexers + [assembler, scaler]
-        preprocessing_pipeline = Pipeline(stages=preprocessing_stages)
+        # Chọn cột features và label
+        final_df = feature_df.select("features", col(label_column).alias("label"))
+        logger.info("Final DataFrame prepared for training.")
 
-        # Áp dụng pipeline tiền xử lý
-        logger.info("Applying preprocessing pipeline...")
-        preprocessed_df = preprocessing_pipeline.fit(df).transform(df)
+        # Chia dữ liệu thành tập huấn luyện và kiểm tra
+        train_df, test_df = final_df.randomSplit([0.8, 0.2], seed=42)
+        logger.info(f"Training set: {train_df.count()} records, Test set: {test_df.count()} records.")
 
-        # Loại bỏ các dòng có giá trị null trong cột mục tiêu (sold)
-        preprocessed_df = preprocessed_df.filter(col("sold").isNotNull())
+        # Khởi tạo mô hình hồi quy tuyến tính
+        lr = LinearRegression(featuresCol="features", labelCol="label")
+        logger.info("LinearRegression model initialized.")
 
-        # --- Chia dữ liệu thành tập huấn luyện và tập kiểm tra ---
-        #train_df, test_df = preprocessed_df.randomSplit([0.8, 0.2], seed=42)
-        categories = preprocessed_df.select("category").distinct().collect()
-        train_dfs = []
-        test_dfs = []
-
-        for row in categories:
-            category_value = row["category"]
-            category_df = preprocessed_df.filter(col("category") == category_value)
-            train_df_part, test_df_part = category_df.randomSplit([0.8, 0.2], seed=42)
-            train_dfs.append(train_df_part)
-            test_dfs.append(test_df_part)
-
-        # Gộp các tập con thành tập huấn luyện và tập kiểm tra chung
-        train_df = train_dfs[0]
-        test_df = test_dfs[0]
-        for i in range(1, len(train_dfs)):
-            train_df = train_df.union(train_dfs[i])
-            test_df = test_df.union(test_dfs[i])
-
-        logger.info(f"Training data size: {train_df.count()}")
-        logger.info(f"Testing data size: {test_df.count()}")
-        logger.info(f"Training data size: {train_df.count()}")
-        logger.info(f"Testing data size: {test_df.count()}")
-
-        # --- Huấn luyện mô hình ---
-        # Sử dụng LinearRegression
-        # lr = LinearRegression(featuresCol="features", labelCol="sold", predictionCol="prediction")
-        lr = GeneralizedLinearRegression(
-            featuresCol="features",
-            labelCol="sold",
-            predictionCol="prediction",
-            family="gaussian",  # Phân phối: gaussian, poisson, gamma, tweedie
-            link="identity",  # Hàm liên kết: identity, log, inverse
-            maxIter=100,
-            regParam=0.01
-        )
-        logger.info("Training Linear Regression model...")
+        # Huấn luyện mô hình
         lr_model = lr.fit(train_df)
+        logger.info("Model training completed.")
 
-        # (Tùy chọn) Sử dụng RandomForestRegressor nếu muốn mô hình phức tạp hơn
-        # rf = RandomForestRegressor(featuresCol="features", labelCol="sold", predictionCol="prediction", numTrees=50)
-        # logger.info("Training Random Forest Regressor model...")
-        # rf_model = rf.fit(train_df)
-
-        # --- Đánh giá mô hình trên tập kiểm tra ---
+        # Dự đoán trên tập kiểm tra
         predictions = lr_model.transform(test_df)
-        evaluator_rmse = RegressionEvaluator(labelCol="sold", predictionCol="prediction", metricName="rmse")
-        evaluator_r2 = RegressionEvaluator(labelCol="sold", predictionCol="prediction", metricName="r2")
+        logger.info("Predictions generated on test set.")
 
-        rmse = evaluator_rmse.evaluate(predictions)
-        r2 = evaluator_r2.evaluate(predictions)
+        # Đánh giá mô hình
+        evaluator = RegressionEvaluator(
+            labelCol="label",
+            predictionCol="prediction",
+            metricName="rmse"
+        )
+        rmse = evaluator.evaluate(predictions)
+        logger.info(f"Root Mean Squared Error (RMSE) on test data: {rmse}")
 
-        logger.info(f"Model evaluation on test set:")
-        logger.info(f"RMSE: {rmse}")
-        logger.info(f"R²: {r2}")
-
-        # Hiển thị một vài dự đoán
-        logger.info("Sample predictions (5 rows):")
-        predictions.select("sold", "prediction", "features").show(5, truncate=False)
-        predictions.select(
-            "sold",
-            "prediction",
-            "brand",
-            "category",
-            "color",
-            "RAM",
-            "ROM",
-            "price",
-            "price_old",
-            "percent",
-            "rating"
-        ).show(25, truncate=False)
-
-        # --- Lưu mô hình ---
+        # Lưu mô hình vào HDFS
         logger.info(f"Saving model to {MODEL_PATH}")
-        lr_model.write().overwrite().save(MODEL_PATH)
+        lr_model.write(MODEL_PATH)
+        logger.info("Model saved successfully.")
+
+        # Hiển thị một số dự đoán mẫu
+        predictions.select("prediction", "label").show(5)
 
     except Exception as e:
-        logger.error(f"ERROR during model training: {e}", exc_info=True)
+        logger.error(f"ERROR during Spark ML job: {e}", exc_info=True)
     finally:
         logger.info("Stopping SparkSession...")
         spark.stop()
-        logger.info("Spark job finished.")
+        logger.info("Spark ML job finished.")
 
 if __name__ == "__main__":
     main()
