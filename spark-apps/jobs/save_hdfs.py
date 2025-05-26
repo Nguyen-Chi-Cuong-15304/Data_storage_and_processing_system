@@ -80,7 +80,7 @@ def main():
         StructField("market_value", FloatType(), True),
         StructField("nationality", StringType(), True),
         StructField("player_height", FloatType(), True),
-        StructField("player_agent", StringType(), True),
+        # StructField("player_agent", StringType(), True),
         StructField("strong_foot", StringType(), True),
         StructField("contract_value_time", StringType(), True),
         StructField("appearances", FloatType(), True),
@@ -98,8 +98,8 @@ def main():
         StructField("minutes_played", FloatType(), True),
         StructField("goals_conceded", FloatType(), True),
         StructField("clean_sheet", FloatType(), True),
-        StructField("crawl_timestamp", LongType(), True),
-        StructField("source", StringType(), True)
+        StructField("crawl_timestamp", LongType(), True)
+        # StructField("source", StringType(), True)
     ])
 
     parsed_df = kafka_df.selectExpr("CAST(value AS STRING) as json_value") \
@@ -110,7 +110,6 @@ def main():
     # Chuẩn hóa và lọc dữ liệu
     # Thay thế null trong player_agent bằng "None"
     transformed_df = parsed_df \
-        .withColumn("player_agent", when(col("player_agent").isNull(), "None").otherwise(col("player_agent"))) \
         .withColumn("timestamp", expr("CAST(crawl_timestamp / 1000 AS TIMESTAMP)")) \
         .withColumn("year", year(col("timestamp"))) \
         .withColumn("month", month(col("timestamp"))) \
@@ -137,7 +136,7 @@ def main():
         "market_value",
         "nationality",
         "player_height",
-        "player_agent",
+        # "player_agent",
         "strong_foot",
         "contract_value_time",
         "appearances",
@@ -156,7 +155,7 @@ def main():
         "goals_conceded",
         "clean_sheet",
         "crawl_timestamp",
-        "source",
+        # "source",
         "year",
         "month",
         "day"
