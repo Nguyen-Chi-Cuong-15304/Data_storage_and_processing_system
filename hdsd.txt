@@ -21,3 +21,7 @@ hdfs dfs -chown -R spark:spark /user/spark/models
 
 6. #train mo hinh 
 docker exec -it spark-master-train-h2dn /opt/bitnami/spark/bin/spark-submit --master spark://spark-master-train-h2dn:7077 /opt/spark-apps/jobs/train_model.py
+
+
+7. #Thuc hien du doan 
+docker exec -it spark-master-train-h2dn /opt/bitnami/spark/bin/spark-submit --master spark://spark-master-train-h2dn:7077 --packages org.apache.spark:spark-sql-kafka-0-10_2.12:3.2.1,org.elasticsearch:elasticsearch-spark-30_2.12:8.9.0 /opt/spark-apps/jobs/predict_price.py
